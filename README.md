@@ -1,6 +1,6 @@
 # Freightline · Port Meridian
 
-A two-player logistics strategy game built for Synergy Network. Claim shipments on the shared exchange, route your truck across the city, and deliver before the deadline. The fleet with the highest practice SNRG balance after ten rounds wins.
+A logistics strategy game built for Synergy Network. Claim shipments on the shared exchange, route your truck across the city, and deliver before the deadline. The fleet with the highest practice SNRG balance after ten rounds wins.
 
 ## Run the browser game
 
@@ -10,7 +10,7 @@ From this directory, start a static server and open [localhost:8765](http://loca
 python3 -m http.server 8765 --bind 127.0.0.1 --directory dist
 ```
 
-Two players share a device. Each starts at their own depot with 150 practice SNRG and gets three actions per shift. Claim one contract at a time, load it at the origin, and unload it at the destination. Roads use fuel. The Fuel Saver lowers per-road fuel costs, and the Route Permit can save one travel action per shift. Both players can see the same published job schedule and deadlines. The browser saves the match on the current device.
+Choose **Play solo** to compete against the Meridian Freight computer fleet, or choose **Two players** to share a device. Each fleet starts at its own depot with 150 practice SNRG and gets three actions per shift. Claim one contract at a time, load it at the origin, and unload it at the destination. Roads use fuel. The Fuel Saver lowers per-road fuel costs, and the Route Permit can save one travel action per shift. Both fleets use the same posted jobs, deadlines, and move rules. The browser saves the match and mode on the current device.
 
 ## Verify the rules
 

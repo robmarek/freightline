@@ -4,9 +4,11 @@ import {
   loadGame, move, pickupJob, saveGame,
 } from './game.mjs';
 import { SYNERGY_NETWORK, checkSynergyNetwork } from './synergy.mjs';
+import { playOpponentShift } from './opponent.mjs';
 
 const byId = (id) => document.getElementById(id);
 const storageKey = 'freightline.dispatch.v1';
+const opponentName = 'Meridian Freight';
 const number = new Intl.NumberFormat('en-US');
 const snrg = (value) => `${number.format(value)} ${CURRENCY}`;
 const icons = { rail: '╫', market: '▤', heights: '▲', depot: '▣', junction: '✣', port: '⚓', foundry: '▥' };
@@ -30,21 +32,27 @@ function button(label, style, id, handler) {
 function restoreMatch() {
   try {
     const saved = localStorage.getItem(storageKey);
-    if (saved) return loadGame(saved);
+    if (saved) {
+      const payload = JSON.parse(saved);
+      if (payload?.mode === 'solo' || payload?.mode === 'local') {
+        return { state: loadGame(JSON.stringify(payload.match)), mode: payload.mode };
+      }
+      return { state: loadGame(saved), mode: 'local' };
+    }
   } catch {
     // A fresh game still works with invalid saves or restricted storage.
   }
-  return createGame();
+  return { state: createGame(), mode: 'local' };
 }
 
-let state = restoreMatch();
+let { state, mode } = restoreMatch();
 let selected = state.players[state.currentPlayer].node;
 let filter = 'open';
 let canvasActions = [];
 
 function persist() {
   try {
-    localStorage.setItem(storageKey, saveGame(state));
+    localStorage.setItem(storageKey, JSON.stringify({ mode, match: JSON.parse(saveGame(state)) }));
   } catch {
     // Keep the active game playable when storage is unavailable.
   }
@@ -63,19 +71,21 @@ function setNotice(text, isError = false) {
   notice.classList.toggle('error', isError);
 }
 
-function dispatch(action, { view, destination, focus } = {}) {
+function dispatch(action, { view, destination, focus, message } = {}) {
+  const previous = state;
   try {
     state = action(state);
   } catch (issue) {
     setNotice(issue.message, true);
     return;
   }
-  if (view) filter = view;
+  if (view) filter = typeof view === 'function' ? view() : view;
   selected = destination ?? state.players[state.currentPlayer].node;
   persist();
   render();
-  setNotice(state.activity[0]?.message ?? '');
-  if (focus) (byId(focus) ?? byId('end-shift')).focus({ preventScroll: true });
+  setNotice(message ? message(previous) : (state.activity[0]?.message ?? ''));
+  const nextFocus = typeof focus === 'function' ? focus() : focus;
+  if (nextFocus) (byId(nextFocus) ?? byId('end-shift')).focus({ preventScroll: true });
 }
 
 function otherEnd(road, district) {
@@ -111,7 +121,8 @@ function renderFleets() {
     const avatar = element('div', 'fleet-avatar', index + 1);
     avatar.setAttribute('aria-hidden', 'true');
     const name = element('div', 'fleet-name');
-    name.append(element('strong', '', player.name), element('small', '', `${NODES[player.node].short} · ${player.delivered} delivered`));
+    const computer = mode === 'solo' && index === 1;
+    name.append(element('strong', '', player.name), element('small', '', `${computer ? 'Computer · ' : ''}${NODES[player.node].short} · ${player.delivered} delivered`));
     const score = element('div', 'fleet-score');
     score.append(element('strong', '', snrg(player.balance)), element('small', '', current ? 'ON SHIFT' : 'BALANCE'));
     panel.append(avatar, name, score);
@@ -337,6 +348,8 @@ function renderJobs(actions) {
 
 function render() {
   const actions = getActions(state);
+  byId('match-mode').textContent = `${mode === 'solo' ? 'Solo vs computer' : 'Two players on one device'} · Practice SNRG`;
+  byId('choose-mode').textContent = mode === 'solo' ? 'Two players' : 'Play solo';
   renderFleets();
   renderShift(actions);
   renderMap(actions);
@@ -347,7 +360,7 @@ function render() {
 
 const rules = element('ol');
 rules.append(...[
-  `Two players take turns on one device. Each fleet starts with ${snrg(START_BALANCE)} in practice funds and gets ${ACTIONS_PER_SHIFT} actions per shift.`,
+  `Play against a computer fleet or take turns with a second player on one device. Each fleet starts with ${snrg(START_BALANCE)} in practice funds and gets ${ACTIONS_PER_SHIFT} actions per shift.`,
   'Claim one open contract at a time from anywhere. A claimed contract is reserved for your fleet. Claiming is free.',
   'Drive along a connected road, pick up at the origin, and deliver at the destination. Each normally uses one action. Driving also costs fuel.',
   'Buy a Fuel Saver at West Depot or a Route Permit at East Depot to save fuel or an action.',
@@ -363,21 +376,48 @@ document.querySelectorAll('[data-filter]').forEach((item) => {
   });
 });
 byId('end-shift').addEventListener('click', () => {
-  const next = 1 - state.currentPlayer;
-  const hasCargo = JOBS.some(({ id }) => state.jobs[id].owner === next && ['claimed', 'loaded'].includes(state.jobs[id].status)
-    && (state.currentPlayer === 0 || JOBS.find((job) => job.id === id).deadline > state.round));
-  const finalShift = state.round === ROUNDS && state.currentPlayer === 1;
-  dispatch(endShift, { view: finalShift ? 'all' : hasCargo ? 'mine' : 'open', focus: finalShift ? 'new-game' : 'turn-title' });
+  dispatch((game) => {
+    const next = endShift(game);
+    return mode === 'solo' ? playOpponentShift(next) : next;
+  }, {
+    view: () => state.phase === 'finished' ? 'all' : activeJob() ? 'mine' : 'open',
+    focus: () => state.phase === 'finished' ? 'new-game' : 'turn-title',
+    message: (previous) => {
+      if (mode !== 'solo' || state.phase === 'finished') return state.activity[0]?.message ?? '';
+      const before = previous.players[1];
+      const after = state.players[1];
+      const deliveries = after.delivered - before.delivered;
+      const change = deliveries ? `completed ${deliveries} ${deliveries === 1 ? 'delivery' : 'deliveries'}`
+        : after.spent > before.spent ? 'moved or upgraded its fleet' : 'held position';
+      return `${opponentName} ${change}. Round ${state.round} is ready.`;
+    },
+  });
 });
 byId('turn-title').tabIndex = -1;
 byId('show-rules').addEventListener('click', () => byId('rules-dialog').showModal());
 byId('show-network').addEventListener('click', () => byId('network-dialog').showModal());
-byId('new-game').addEventListener('click', () => byId('new-dialog').showModal());
+const modeOptions = [...document.querySelectorAll('[name="mode"]')];
+function syncModeFields() {
+  const solo = modeOptions.find((option) => option.checked).value === 'solo';
+  byId('name-two').disabled = solo;
+  byId('second-player-label').hidden = solo;
+}
+function openNewMatch(nextMode) {
+  modeOptions.find((option) => option.value === nextMode).checked = true;
+  byId('name-one').value = state.players[0].name;
+  byId('name-two').value = mode === 'local' ? state.players[1].name : 'Ellis';
+  syncModeFields();
+  byId('new-dialog').showModal();
+}
+modeOptions.forEach((item) => item.addEventListener('change', syncModeFields));
+byId('new-game').addEventListener('click', () => openNewMatch(mode));
+byId('choose-mode').addEventListener('click', () => openNewMatch(mode === 'local' ? 'solo' : 'local'));
 document.querySelectorAll('[data-close]').forEach((item) => item.addEventListener('click', () => item.closest('dialog').close()));
 byId('new-form').addEventListener('submit', (event) => {
   event.preventDefault();
   const data = new FormData(event.currentTarget);
-  dispatch(() => createGame([data.get('one'), data.get('two')]), { view: 'open' });
+  mode = data.get('mode') === 'solo' ? 'solo' : 'local';
+  dispatch(() => createGame([data.get('one'), mode === 'solo' ? opponentName : data.get('two')]), { view: 'open' });
   byId('new-dialog').close();
   byId('turn-title').focus({ preventScroll: true });
 });
@@ -392,6 +432,11 @@ byId('check-network').addEventListener('click', async (event) => {
   trigger.disabled = false;
 });
 
+if (mode === 'solo' && state.phase === 'playing' && state.currentPlayer === 1) {
+  state = playOpponentShift(state);
+  selected = state.players[state.currentPlayer].node;
+  persist();
+}
 if (activeJob()) filter = 'mine';
 if (state.phase === 'finished') filter = 'all';
 render();

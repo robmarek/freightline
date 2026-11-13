@@ -18,6 +18,7 @@
         <span>FREIGHTLINE<small>PORT MERIDIAN</small></span>
       </a>
       <div class="top-actions">
+        <button id="choose-mode" class="top-button mode-button" type="button">Play solo</button>
         <button id="show-rules" class="top-button" type="button"><span class="top-icon" aria-hidden="true">ⓘ</span> How to play</button>
         <button id="show-network" class="top-button network-button" type="button" aria-label="Synergy Testnet"><span class="network-dot" aria-hidden="true"></span> <span><span class="network-brand">Synergy </span>Testnet</span></button>
       </div>
@@ -72,7 +73,7 @@
       </aside>
     </div>
     <p class="notice" id="notice" role="status"></p>
-    <footer class="footer"><span>FREIGHTLINE</span><span>Two players on one device · Practice SNRG</span></footer>
+    <footer class="footer"><span>FREIGHTLINE</span><span id="match-mode">Two players on one device · Practice SNRG</span></footer>
   </main>
   <dialog class="dialog" id="rules-dialog" aria-labelledby="rules-title">
     <button type="button" class="close-button" aria-label="Close" data-close>×</button>
@@ -92,9 +93,14 @@
     <h2 id="new-title">New match</h2>
     <p>Starting a new match replaces the saved dispatch on this device.</p>
     <form id="new-form">
+      <fieldset class="mode-options">
+        <legend>Match type</legend>
+        <label><input type="radio" name="mode" value="local" checked><span>Two players</span></label>
+        <label><input type="radio" name="mode" value="solo"><span>Solo vs computer</span></label>
+      </fieldset>
       <div class="form-grid">
         <label for="name-one">Player 1<input id="name-one" name="one" required maxlength="24" value="Mara"></label>
-        <label for="name-two">Player 2<input id="name-two" name="two" required maxlength="24" value="Ellis"></label>
+        <label for="name-two" id="second-player-label">Player 2<input id="name-two" name="two" required maxlength="24" value="Ellis"></label>
       </div>
       <div class="dialog-actions"><button type="button" class="button secondary" data-close>Cancel</button><button type="submit" class="button primary">Start match</button></div>
     </form>
