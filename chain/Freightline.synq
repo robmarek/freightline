@@ -1,0 +1,298 @@
+// Deterministic two-player freight game for local AIVM testing.
+// Whole practice SNRG are nonredeemable. Native value is rejected.
+contract Freightline {
+    players: mapping(UInt256 => Address);
+    balances: mapping(UInt256 => UInt256);
+    positions: mapping(UInt256 => UInt256);
+    roads: mapping(UInt256 => UInt256);
+    jobOrigins: mapping(UInt256 => UInt256);
+    jobDestinations: mapping(UInt256 => UInt256);
+    jobOpens: mapping(UInt256 => UInt256);
+    jobDeadlines: mapping(UInt256 => UInt256);
+    jobRewards: mapping(UInt256 => UInt256);
+    jobOwners: mapping(UInt256 => UInt256);
+    jobDelivered: mapping(UInt256 => Bool);
+    activeJobs: mapping(UInt256 => UInt256);
+    loaded: mapping(UInt256 => Bool);
+    fuelSavers: mapping(UInt256 => Bool);
+    routePermits: mapping(UInt256 => Bool);
+    permitUsed: Bool;
+    round: UInt256;
+    turn: UInt256;
+    actions: UInt256;
+    winner: UInt256;
+
+    event Joined(seat: UInt256, account: Address);
+    event JobClaimed(seat: UInt256, job: UInt256);
+    event JobPickedUp(seat: UInt256, job: UInt256);
+    event JobDelivered(seat: UInt256, job: UInt256, reward: UInt256);
+    event JobExpired(seat: UInt256, job: UInt256);
+    event TruckMoved(seat: UInt256, destination: UInt256, fuel: UInt256);
+    event TruckUpgraded(seat: UInt256, upgrade: UInt256, price: UInt256);
+    event MatchFinished(winningSeat: UInt256);
+
+    constructor() {
+        practiceOnly();
+        require(msg.sender != Address(0), "Player account required");
+        players[1] = msg.sender;
+        balances[1] = 150;
+        positions[1] = 1;
+
+        // West=1, East=2, Rail=3, Market=4, Heights=5, Junction=6, Port=7, Foundry=8.
+        addRoad(1, 3, 4);
+        addRoad(3, 4, 5);
+        addRoad(4, 5, 6);
+        addRoad(5, 2, 4);
+        addRoad(2, 8, 5);
+        addRoad(8, 7, 7);
+        addRoad(7, 1, 4);
+        addRoad(1, 6, 5);
+        addRoad(4, 6, 4);
+        addRoad(6, 2, 6);
+        addRoad(6, 7, 5);
+        addRoad(6, 8, 4);
+
+        // Job IDs match the browser schedule, from j1 through j12.
+        addJob(1, 1, 4, 1, 2, 47);
+        addJob(2, 2, 5, 1, 2, 35);
+        addJob(3, 7, 8, 1, 4, 56);
+        addJob(4, 3, 1, 2, 4, 40);
+        addJob(5, 8, 6, 3, 5, 42);
+        addJob(6, 4, 3, 3, 5, 44);
+        addJob(7, 6, 5, 4, 6, 59);
+        addJob(8, 2, 7, 5, 8, 68);
+        addJob(9, 3, 6, 5, 8, 53);
+        addJob(10, 4, 1, 7, 9, 58);
+        addJob(11, 8, 2, 8, 10, 52);
+        addJob(12, 7, 6, 9, 10, 55);
+        emit Joined(1, msg.sender);
+    }
+
+    @public @gas_cost(base: 20000)
+    function join() {
+        practiceOnly();
+        require(round == 0, "Both seats are filled");
+        require(msg.sender != Address(0) && msg.sender != players[1], "Second account required");
+        players[2] = msg.sender;
+        balances[2] = 150;
+        positions[2] = 2;
+        round = 1;
+        turn = 1;
+        actions = 3;
+        emit Joined(2, msg.sender);
+    }
+
+    @public @gas_cost(base: 20000)
+    function claim(job: UInt256) {
+        let seat: UInt256 = activeSeat();
+        require(activeJobs[seat] == 0, "Finish your active job first");
+        require(jobOpens[job] > 0 && round >= jobOpens[job] && round <= jobDeadlines[job], "Job unavailable");
+        require(jobOwners[job] == 0, "Job already claimed");
+        jobOwners[job] = seat;
+        activeJobs[seat] = job;
+        emit JobClaimed(seat, job);
+    }
+
+    @public @gas_cost(base: 20000)
+    function pickUp() {
+        let seat: UInt256 = activeSeat();
+        let job: UInt256 = activeJobs[seat];
+        require(job > 0 && !loaded[seat], "Uncollected job required");
+        require(positions[seat] == jobOrigins[job], "Truck must be at pickup");
+        spendAction();
+        loaded[seat] = true;
+        emit JobPickedUp(seat, job);
+    }
+
+    @public @gas_cost(base: 20000)
+    function deliver() {
+        let seat: UInt256 = activeSeat();
+        let job: UInt256 = activeJobs[seat];
+        require(job > 0 && loaded[seat], "Load the active job first");
+        require(positions[seat] == jobDestinations[job], "Truck must be at delivery");
+        spendAction();
+        let reward: UInt256 = jobRewards[job];
+        balances[seat] = balances[seat] + reward;
+        jobDelivered[job] = true;
+        activeJobs[seat] = 0;
+        loaded[seat] = false;
+        emit JobDelivered(seat, job, reward);
+    }
+
+    @public @gas_cost(base: 30000)
+    function move(destination: UInt256) {
+        let seat: UInt256 = activeSeat();
+        require(destination >= 1 && destination <= 8, "Unknown district");
+        let distance: UInt256 = roads[positions[seat] * 10 + destination];
+        require(distance > 0, "Truck must use an adjacent road");
+        let fuel: UInt256 = fuelSavers[seat] ? distance + 1 : distance * 2;
+        require(balances[seat] >= fuel, "Insufficient practice SNRG for fuel");
+        if (routePermits[seat] && !permitUsed && distance >= 6) {
+            permitUsed = true;
+        } else {
+            spendAction();
+        }
+        balances[seat] = balances[seat] - fuel;
+        positions[seat] = destination;
+        emit TruckMoved(seat, destination, fuel);
+    }
+
+    // Upgrade 1: Fuel Saver at West. Upgrade 2: Route Permit at East.
+    @public @gas_cost(base: 20000)
+    function upgrade(kind: UInt256) {
+        let seat: UInt256 = activeSeat();
+        let price: UInt256 = 0;
+        if (kind == 1) {
+            require(positions[seat] == 1 && !fuelSavers[seat], "Fuel Saver unavailable");
+            price = 24;
+            fuelSavers[seat] = true;
+        } else {
+            require(kind == 2 && positions[seat] == 2 && !routePermits[seat], "Route Permit unavailable");
+            price = 22;
+            routePermits[seat] = true;
+        }
+        require(balances[seat] >= price, "Insufficient practice SNRG for upgrade");
+        spendAction();
+        balances[seat] = balances[seat] - price;
+        emit TruckUpgraded(seat, kind, price);
+    }
+
+    @public @gas_cost(base: 30000)
+    function endShift() {
+        activeSeat();
+        permitUsed = false;
+        if (turn == 1) {
+            turn = 2;
+            actions = 3;
+            return;
+        }
+        expireJob(1);
+        expireJob(2);
+        if (round < 10) {
+            round = round + 1;
+            turn = 1;
+            actions = 3;
+            return;
+        }
+        turn = 0;
+        actions = 0;
+        if (balances[1] > balances[2]) {
+            winner = 1;
+        }
+        if (balances[2] > balances[1]) {
+            winner = 2;
+        }
+        emit MatchFinished(winner);
+    }
+
+    @public @gas_cost(base: 20000)
+    function currentRound() -> UInt256 {
+        practiceOnly();
+        return round;
+    }
+
+    // Seat 0 means the lobby is waiting or the match has finished.
+    @public @gas_cost(base: 20000)
+    function currentTurn() -> UInt256 {
+        practiceOnly();
+        return turn;
+    }
+
+    @public @gas_cost(base: 20000)
+    function remainingActions() -> UInt256 {
+        practiceOnly();
+        return actions;
+    }
+
+    // In a finished match, winning seat 0 denotes a tie.
+    @public @gas_cost(base: 20000)
+    function winningSeat() -> UInt256 {
+        practiceOnly();
+        return winner;
+    }
+
+    @public @gas_cost(base: 20000)
+    function playerBalance(seat: UInt256) -> UInt256 {
+        validateSeat(seat);
+        return balances[seat];
+    }
+
+    @public @gas_cost(base: 20000)
+    function playerPosition(seat: UInt256) -> UInt256 {
+        validateSeat(seat);
+        return positions[seat];
+    }
+
+    @public @gas_cost(base: 20000)
+    function playerJob(seat: UInt256) -> UInt256 {
+        validateSeat(seat);
+        return activeJobs[seat];
+    }
+
+    // Job states: 0 unreleased/unknown, 1 available, 2 claimed, 3 loaded, 4 delivered, 5 expired.
+    @public @gas_cost(base: 20000)
+    function jobStatus(job: UInt256) -> UInt256 {
+        practiceOnly();
+        let opens: UInt256 = jobOpens[job];
+        if (opens == 0 || round < opens) {
+            return 0;
+        }
+        if (jobDelivered[job]) {
+            return 4;
+        }
+        if (round > jobDeadlines[job] || turn == 0) {
+            return 5;
+        }
+        let seat: UInt256 = jobOwners[job];
+        if (seat == 0) {
+            return 1;
+        }
+        if (loaded[seat]) {
+            return 3;
+        }
+        return 2;
+    }
+
+    function activeSeat() private -> UInt256 {
+        practiceOnly();
+        require(turn > 0, "No active shift");
+        require(msg.sender == players[turn], "Not your shift");
+        return turn;
+    }
+
+    function spendAction() private {
+        require(actions > 0, "No actions remaining");
+        actions = actions - 1;
+    }
+
+    function expireJob(seat: UInt256) private {
+        let job: UInt256 = activeJobs[seat];
+        if (job > 0 && jobDeadlines[job] <= round) {
+            activeJobs[seat] = 0;
+            loaded[seat] = false;
+            emit JobExpired(seat, job);
+        }
+    }
+
+    function validateSeat(seat: UInt256) private {
+        practiceOnly();
+        require(seat == 1 || seat == 2, "Unknown seat");
+    }
+
+    function practiceOnly() private {
+        require(msg.value == 0, "Practice SNRG only");
+    }
+
+    function addRoad(from: UInt256, to: UInt256, distance: UInt256) private {
+        roads[from * 10 + to] = distance;
+        roads[to * 10 + from] = distance;
+    }
+
+    function addJob(id: UInt256, origin: UInt256, destination: UInt256, opens: UInt256, deadline: UInt256, reward: UInt256) private {
+        jobOrigins[id] = origin;
+        jobDestinations[id] = destination;
+        jobOpens[id] = opens;
+        jobDeadlines[id] = deadline;
+        jobRewards[id] = reward;
+    }
+}
