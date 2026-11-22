@@ -1,5 +1,7 @@
 # Freightline · Port Meridian
 
+[Play online](https://robmarek.github.io/freightline/)
+
 A logistics strategy game built for Synergy Network. Claim shipments on the shared exchange, route your truck across the city, and deliver before the deadline. The fleet with the highest practice SNRG balance after ten rounds wins.
 
 ## Run the browser game
